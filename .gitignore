@@ -1,0 +1,8 @@
+venv/
+__pycache__/
+*.pyc
+instance/clinica.db
+instance/backups/
+uploads/*
+!uploads/.gitkeep
+.env
