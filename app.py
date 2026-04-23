@@ -1,3 +1,9 @@
+
+# -*- coding: utf-8 -*-
+import sys
+import io
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+
 import shutil
 import os
 from datetime import datetime
@@ -29,12 +35,48 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
+from email.header import Header
 
-# Configuración de email (MODIFICA CON TUS DATOS)
-EMAIL_REMITENTE = "tuclinica@gmail.com"
-EMAIL_PASSWORD = "tu_contraseña_de_aplicacion"  # Usa contraseña de aplicación
+# ========== CONFIGURACIÓN DE EMAIL ==========
+EMAIL_REMITENTE = "Lisamalango093@gmail.com"        # ← CAMBIA por tu email real
+EMAIL_PASSWORD = "pcbe lwlg pmhb cyll"         # ← CAMBIA por tu contraseña de aplicación
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
+
+def enviar_email(destinatario, asunto, cuerpo, archivo_adjunto=None):
+    """Envía un email con UTF-8 y archivo adjunto opcional"""
+    try:
+        # Crear mensaje
+        msg = MIMEMultipart()
+        msg['From'] = EMAIL_REMITENTE
+        msg['To'] = destinatario
+        msg['Subject'] = Header(asunto, 'utf-8')
+
+        # Cuerpo del email con soporte UTF-8 (ñ, acentos, etc.)
+        msg.attach(MIMEText(cuerpo, 'plain', 'utf-8'))
+
+        # Adjuntar archivo (opcional)
+        if archivo_adjunto:
+            with open(archivo_adjunto, 'rb') as adjunto:
+                parte = MIMEBase('application', 'octet-stream')
+                parte.set_payload(adjunto.read())
+                encoders.encode_base64(parte)
+                parte.add_header(
+                    'Content-Disposition',
+                    f'attachment; filename="{archivo_adjunto.split("/")[-1]}"'
+                )
+                msg.attach(parte)
+
+        # Enviar
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+            server.starttls()
+            server.login(EMAIL_REMITENTE, EMAIL_PASSWORD)
+            server.send_message(msg)
+
+        return True, "✅ Email enviado correctamente"
+    
+    except Exception as e:
+        return False, f"❌ Error al enviar: {e}"
 
 from flask import Flask, render_template_string, request, redirect, url_for, session, flash, send_file
 from flask_sqlalchemy import SQLAlchemy
@@ -56,6 +98,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
 
 app = Flask(__name__)
+app.config['JSON_AS_ASCII'] = False
 app.config['SECRET_KEY'] = 'clinica-medica-secreta-2024'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///clinica.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -105,6 +148,7 @@ class Paciente(db.Model):
     usuario_id = db.Column(db.Integer, db.ForeignKey('usuario.id'), nullable=False)
     usuario = db.relationship('Usuario', backref='pacientes')
 
+    
 class Cita(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     titulo = db.Column(db.String(200), nullable=False)
@@ -223,13 +267,18 @@ class DocumentoClinico(db.Model):
     
     historial = db.relationship('HistoriaClinica', backref='documentos')
     usuario = db.relationship('Usuario', backref='documentos_clinicos')
-    
+
+
 class Receta(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     nombre_medicamento = db.Column(db.String(200), nullable=False)
     dosis = db.Column(db.Text)
     instrucciones = db.Column(db.Text)
+    diagnostico = db.Column(db.Text)
+    indicaciones = db.Column(db.Text)
+    proxima_cita = db.Column(db.String(20))
     fecha = db.Column(db.String(20), default=datetime.now().strftime("%d/%m/%Y"))
+    estado = db.Column(db.String(50), default='Activa')
     historial_id = db.Column(db.Integer, db.ForeignKey('historia_clinica.id'), nullable=False)
     paciente_id = db.Column(db.Integer, db.ForeignKey('paciente.id'), nullable=True)
     medico_id = db.Column(db.Integer, db.ForeignKey('usuario.id'), nullable=False)
@@ -238,6 +287,17 @@ class Receta(db.Model):
     paciente = db.relationship('Paciente', backref='recetas')
     medico = db.relationship('Usuario', backref='recetas')
 
+class Documento(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    nombre = db.Column(db.String(200), nullable=False)
+    tipo = db.Column(db.String(50))
+    ruta = db.Column(db.String(500))
+    fecha_subida = db.Column(db.String(20), default=datetime.now().strftime("%d/%m/%Y"))
+    paciente_id = db.Column(db.Integer, db.ForeignKey('paciente.id'), nullable=True)
+    usuario_id = db.Column(db.Integer, db.ForeignKey('usuario.id'), nullable=False)
+    
+    paciente = db.relationship('Paciente', backref='documentos')
+    usuario = db.relationship('Usuario', backref='documentos')
 
     # ========== FUNCIONES AUXILIARES ==========
 
@@ -269,7 +329,7 @@ def generar_pdf_receta(receta):
     # Cabecera
     elements.append(Paragraph("CLÍNICA MÉDICA", title_style))
     elements.append(Paragraph(f"Receta Médica Nº {receta.id:06d}", styles['Heading2']))
-    elements.append(Paragraph(f"Fecha de emisión: {receta.fecha_emision}", styles['Normal']))
+    elements.append(Paragraph(f"Fecha de emisión: {receta.fecha}", styles['Normal']))
     elements.append(Spacer(1, 1*cm))
     
     # Datos del paciente y médico
@@ -295,12 +355,12 @@ def generar_pdf_receta(receta):
     elements.append(Paragraph(receta.diagnostico or 'No especificado', styles['Normal']))
     elements.append(Spacer(1, 0.5*cm))
     
-    # Medicamentos
-    elements.append(Paragraph("<b>💊 Medicamentos Recetados:</b>", styles['Heading3']))
-    medicamentos = json.loads(receta.medicamentos) if receta.medicamentos else []
-    if medicamentos:
+    # dosis
+    elements.append(Paragraph("<b>💊 dosis Recetados:</b>", styles['Heading3']))
+    dosis = json.loads(receta.dosis) if receta.dosis else []
+    if dosis:
         med_data = [['Medicamento', 'Dosis', 'Frecuencia', 'Duración']]
-        for m in medicamentos:
+        for m in dosis:
             med_data.append([
                 m.get('nombre', ''), 
                 m.get('dosis', ''), 
@@ -319,7 +379,7 @@ def generar_pdf_receta(receta):
         ]))
         elements.append(med_table)
     else:
-        elements.append(Paragraph("No hay medicamentos recetados", styles['Normal']))
+        elements.append(Paragraph("No hay dosis recetados", styles['Normal']))
     
     elements.append(Spacer(1, 0.8*cm))
     
@@ -2483,15 +2543,15 @@ def ver_paciente(id):
     recetas = Receta.query.filter_by(paciente_id=paciente.id).order_by(Receta.id.desc()).limit(5).all()
     recetas_html = ""
     for r in recetas:
-        medicamentos_count = len(json.loads(r.medicamentos)) if r.medicamentos else 0
+        dosis_count = len(json.loads(r.dosis)) if r.dosis else 0
         recetas_html += f"""
         <div style="padding: 12px; border-bottom: 1px solid #eee;">
             <div style="display: flex; justify-content: space-between;">
                 <strong>📋 Receta #{r.id:06d}</strong>
-                <span style="color: #666; font-size: 12px;">{r.fecha_emision}</span>
+                <span style="color: #666; font-size: 12px;">{r.fecha}</span>
             </div>
             <p style="font-size: 13px; color: #666; margin-top: 5px;">
-                💊 {medicamentos_count} medicamento(s) | Estado: <span style="color: #27ae60;">{r.estado}</span>
+                💊 {dosis_count} medicamento(s) | Estado: <span style="color: #27ae60;">{r.estado}</span>
             </p>
             <a href="/receta/{r.id}" class="btn btn-success btn-sm" style="margin-top: 5px;">👁️ Ver receta</a>
         </div>
@@ -5088,7 +5148,6 @@ def informe_mensual():
 
 
 # ========== GESTIÓN DE RECETAS ==========
-
 @app.route('/receta/nueva', methods=['GET', 'POST'])
 @login_required
 def nueva_receta():
@@ -5099,31 +5158,44 @@ def nueva_receta():
         # Procesar medicamentos
         medicamentos = []
         nombres = request.form.getlist('medicamento_nombre[]')
-        dosis = request.form.getlist('medicamento_dosis[]')
+        dosis_list = request.form.getlist('medicamento_dosis[]')
         frecuencias = request.form.getlist('medicamento_frecuencia[]')
         duraciones = request.form.getlist('medicamento_duracion[]')
         
-        for i in range(len(nombres)):
-            if nombres[i].strip():
-                medicamentos.append({
+        for i in range(len(nombres)):       # ← 8 espacios exactos
+            if nombres[i].strip():           # 12 espacios
+                medicamentos.append({        # 16 espacios
                     'nombre': nombres[i],
-                    'dosis': dosis[i],
-                    'frecuencia': frecuencias[i],
-                    'duracion': duraciones[i]
+                    'dosis': dosis_list[i] if i < len(dosis_list) else '',
+                    'frecuencia': frecuencias[i] if i < len(frecuencias) else '',
+                    'duracion': duraciones[i] if i < len(duraciones) else ''
                 })
         
+        import json
+        medicamentos_json = json.dumps(medicamentos, ensure_ascii=False)
+        # ... resto igual ...
+        
+        import json
+        medicamentos_json = json.dumps(medicamentos, ensure_ascii=False)
+        
         receta = Receta(
-            paciente_id=request.form['paciente_id'],
-            medico_id=user.id,
+            nombre_medicamento=medicamentos[0]['nombre'] if medicamentos else '',
+            dosis=medicamentos_json,
+            instrucciones=request.form.get('instrucciones', ''),
             diagnostico=request.form.get('diagnostico', ''),
-            medicamentos=json.dumps(medicamentos),
             indicaciones=request.form.get('indicaciones', ''),
-            proxima_cita=request.form.get('proxima_cita', '')
+            proxima_cita=request.form.get('proxima_cita', ''),
+            historial_id=request.form.get('historial_id') or 1,
+            paciente_id=request.form.get('paciente_id') or None,
+            medico_id=session['user_id']
         )
         db.session.add(receta)
         db.session.commit()
         flash('✅ Receta emitida correctamente')
         return redirect(f'/receta/{receta.id}')
+    
+    # GET
+    pacientes = Paciente.query.all()
     
     # Obtener pacientes
     if session.get('rol') == 'admin':
@@ -5165,8 +5237,8 @@ def nueva_receta():
                 </div>
                 
                 <div class="card">
-                    <h3>💊 Medicamentos</h3>
-                    <div id="medicamentos-container">
+                    <h3>💊 dosis</h3>
+                    <div id="dosis-container">
                         <div class="medicamento-item" style="background: #f8f9fa; padding: 15px; border-radius: 12px; margin-bottom: 15px;">
                             <div class="form-group">
                                 <label>Nombre del medicamento</label>
@@ -5205,14 +5277,14 @@ def nueva_receta():
         
         <script>
             function agregarMedicamento() {{
-                const container = document.getElementById('medicamentos-container');
+                const container = document.getElementById('dosis-container');
                 const nuevo = document.createElement('div');
                 nuevo.className = 'medicamento-item';
                 nuevo.style.cssText = 'background: #f8f9fa; padding: 15px; border-radius: 12px; margin-bottom: 15px;';
                 nuevo.innerHTML = `
                     <div class="form-group">
                         <label>Nombre del medicamento</label>
-                        <input type="text" name="medicamento_nombre[]" class="form-control" placeholder="Ej: Paracetamol 500mg">
+                        <input type="text" name="medicamento_nombre[]" class="form-control" placeholder="Ej: Ibuprofeno 600mg">
                     </div>
                     <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
                         <div class="form-group">
@@ -5236,6 +5308,8 @@ def nueva_receta():
     """
     return base_html(content, "Nueva Receta")
 
+
+
 @app.route('/receta/<int:id>')
 @login_required
 def ver_receta(id):
@@ -5247,11 +5321,12 @@ def ver_receta(id):
         flash('❌ No tienes permiso para ver esta receta')
         return redirect('/recetas')
     
-    medicamentos = json.loads(receta.medicamentos) if receta.medicamentos else []
+    import json
+    dosis = json.loads(receta.dosis) if receta.dosis else []    # 4 espacios
     
-    medicamentos_html = ""
-    for m in medicamentos:
-        medicamentos_html += f"""
+    dosis_html = ""    # 4 espacios
+    for m in dosis:    # 4 espacios
+        dosis_html += f"""    # 8 espacios
         <tr>
             <td>{m.get('nombre', '')}</td>
             <td>{m.get('dosis', '')}</td>
@@ -5259,6 +5334,8 @@ def ver_receta(id):
             <td>{m.get('duracion', '')}</td>
         </tr>
         """
+    
+    # ... resto del código ...
     
     # Versión imprimible
     imprimible = request.args.get('imprimir', False)
@@ -5273,7 +5350,7 @@ def ver_receta(id):
                 </div>
                 <div style="text-align: right;">
                     <p style="margin: 0; font-weight: bold;">Nº {receta.id:06d}</p>
-                    <p style="margin: 5px 0 0;">{receta.fecha_emision}</p>
+                    <p style="margin: 5px 0 0;">{receta.fecha}</p>
                 </div>
             </div>
             
@@ -5298,7 +5375,7 @@ def ver_receta(id):
             </div>
             
             <div style="margin-bottom: 30px;">
-                <h3 style="color: #1a5276; border-bottom: 1px solid #ddd; padding-bottom: 5px;">💊 Medicamentos Recetados</h3>
+                <h3 style="color: #1a5276; border-bottom: 1px solid #ddd; padding-bottom: 5px;">💊 dosis Recetados</h3>
                 <table style="width: 100%; border-collapse: collapse;">
                     <thead>
                         <tr style="background: #1a5276; color: white;">
@@ -5309,7 +5386,7 @@ def ver_receta(id):
                         </tr>
                     </thead>
                     <tbody>
-                        {medicamentos_html if medicamentos else '<tr><td colspan="4" style="padding: 20px; text-align: center; color: #999;">No hay medicamentos recetados</td></tr>'}
+                        {dosis_html if dosis else '<tr><td colspan="4" style="padding: 20px; text-align: center; color: #999;">No hay dosis recetados</td></tr>'}
                     </tbody>
                 </table>
             </div>
@@ -5386,7 +5463,7 @@ def descargar_receta_pdf(id):
     # Datos paciente y médico
     data = [
         ['Paciente:', receta.paciente.nombre, 'Médico:', f"Dr/a. {receta.medico.nombre_completo}"],
-        ['Fecha:', receta.fecha_emision, 'Especialidad:', receta.medico.departamento],
+        ['Fecha:', receta.fecha, 'Especialidad:', receta.medico.departamento],
     ]
     table = Table(data, colWidths=[3*cm, 6*cm, 3*cm, 6*cm])
     table.setStyle(TableStyle([
@@ -5402,12 +5479,12 @@ def descargar_receta_pdf(id):
     elements.append(Paragraph(receta.diagnostico or 'No especificado', styles['Normal']))
     elements.append(Spacer(1, 0.5*cm))
     
-    # Medicamentos
-    elements.append(Paragraph("Medicamentos Recetados:", styles['Heading3']))
-    medicamentos = json.loads(receta.medicamentos) if receta.medicamentos else []
-    if medicamentos:
+    # dosis
+    elements.append(Paragraph("dosis Recetados:", styles['Heading3']))
+    dosis = json.loads(receta.dosis) if receta.dosis else []
+    if dosis:
         med_data = [['Medicamento', 'Dosis', 'Frecuencia', 'Duración']]
-        for m in medicamentos:
+        for m in dosis:
             med_data.append([m.get('nombre', ''), m.get('dosis', ''), m.get('frecuencia', ''), m.get('duracion', '')])
         med_table = Table(med_data, colWidths=[5*cm, 3*cm, 4*cm, 3*cm])
         med_table.setStyle(TableStyle([
@@ -5417,7 +5494,7 @@ def descargar_receta_pdf(id):
         ]))
         elements.append(med_table)
     else:
-        elements.append(Paragraph("No hay medicamentos recetados", styles['Normal']))
+        elements.append(Paragraph("No hay dosis recetados", styles['Normal']))
     
     elements.append(Spacer(1, 0.5*cm))
     elements.append(Paragraph("Indicaciones:", styles['Heading3']))
@@ -5446,15 +5523,14 @@ def recetas():
     
     recetas_html = ""
     for r in recetas_list[:30]:
-        medicamentos_count = len(json.loads(r.medicamentos)) if r.medicamentos else 0
-        
+        dosis_count = len(json.loads(r.dosis)) if r.dosis else 0        
         recetas_html += f"""
         <tr>
             <td><strong>#{r.id:06d}</strong></td>
             <td>{r.paciente.nombre}</td>
-            <td>{r.fecha_emision}</td>
+            <td>{r.fecha}</td>
             <td><span class="badge badge-success">{r.estado}</span></td>
-            <td>{medicamentos_count} medicamentos</td>
+            <td>{dosis_count} dosis</td>
             <td>
                 <a href="/receta/{r.id}" class="btn btn-primary btn-sm">👁️ Ver</a>
                 <a href="/receta/{r.id}?imprimir=1" class="btn btn-success btn-sm" target="_blank">🖨️</a>
@@ -5473,7 +5549,7 @@ def recetas():
                     <th>Paciente</th>
                     <th>Fecha</th>
                     <th>Estado</th>
-                    <th>Medicamentos</th>
+                    <th>dosis</th>
                     <th>Acciones</th>
                 </tr>
             </thead>
@@ -5531,7 +5607,7 @@ def enviar_receta_email_route(id):
                 <p style="margin-top: 30px;">
                     <strong>Resumen de la receta:</strong><br>
                     📋 Nº Receta: {receta.id:06d}<br>
-                    📅 Fecha: {receta.fecha_emision}<br>
+                    📅 Fecha: {receta.fecha}<br>
                     🔬 Diagnóstico: {receta.diagnostico or 'No especificado'}
                 </p>
                 
