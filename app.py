@@ -75,7 +75,7 @@ def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
     
     
-    # ========== MODELOS ==========
+# ========== MODELOS ==========
 
 class Usuario(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -89,6 +89,21 @@ class Usuario(db.Model):
     citas = db.relationship('Cita', backref='medico', lazy=True, foreign_keys='Cita.usuario_id')
     reset_token = db.Column(db.String(100), nullable=True)
     reset_token_expira = db.Column(db.String(20), nullable=True)
+
+class Paciente(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    nombre = db.Column(db.String(100), nullable=False)
+    email = db.Column(db.String(100))
+    telefono = db.Column(db.String(20))
+    obra_social = db.Column(db.String(100))
+    direccion = db.Column(db.String(200))
+    fecha_nacimiento = db.Column(db.String(20))
+    grupo_sanguineo = db.Column(db.String(5))
+    alergias = db.Column(db.Text)
+    notas = db.Column(db.Text)
+    fecha_creacion = db.Column(db.String(20), default=datetime.now().strftime("%d/%m/%Y"))
+    usuario_id = db.Column(db.Integer, db.ForeignKey('usuario.id'), nullable=False)
+    usuario = db.relationship('Usuario', backref='pacientes')
 
 class Cita(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -144,21 +159,6 @@ class Mensaje(db.Model):
     emisor = db.relationship('Usuario', foreign_keys=[emisor_id], backref='mensajes_enviados')
     receptor = db.relationship('Usuario', foreign_keys=[receptor_id], backref='mensajes_recibidos')
 
-class Paciente(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    nombre = db.Column(db.String(100), nullable=False)
-    email = db.Column(db.String(100))
-    telefono = db.Column(db.String(20))
-    obra_social = db.Column(db.String(100))
-    direccion = db.Column(db.String(200))
-    fecha_nacimiento = db.Column(db.String(20))
-    grupo_sanguineo = db.Column(db.String(5))
-    alergias = db.Column(db.Text)
-    notas = db.Column(db.Text)
-    fecha_creacion = db.Column(db.String(20), default=datetime.now().strftime("%d/%m/%Y"))
-    usuario_id = db.Column(db.Integer, db.ForeignKey('usuario.id'), nullable=False)
-    usuario = db.relationship('Usuario', backref='pacientes')
-
 class Interaccion(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     tipo = db.Column(db.String(50), default='Nota')
@@ -211,32 +211,18 @@ class HistoriaClinica(db.Model):
     usuario = db.relationship('Usuario', backref='historias_clinicas')
     paciente = db.relationship('Paciente', backref='historias_clinicas')
 
-class Documento(db.Model):
+class DocumentoClinico(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     nombre = db.Column(db.String(200), nullable=False)
     nombre_original = db.Column(db.String(200))
     tipo_archivo = db.Column(db.String(50))
+    tipo_documento = db.Column(db.String(50), default='Otro')
     fecha_subida = db.Column(db.String(20), default=datetime.now().strftime("%d/%m/%Y %H:%M"))
-    historia_clinica_id = db.Column(db.Integer, db.ForeignKey('historia_clinica.id'), nullable=False)
+    historial_id = db.Column(db.Integer, db.ForeignKey('historia_clinica.id'), nullable=False)
     usuario_id = db.Column(db.Integer, db.ForeignKey('usuario.id'), nullable=False)
     
-    historia_clinica = db.relationship('HistoriaClinica', backref='documentos')
-    usuario = db.relationship('Usuario', backref='documentos')
-
-
-class Receta(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    paciente_id = db.Column(db.Integer, db.ForeignKey('paciente.id'), nullable=False)
-    medico_id = db.Column(db.Integer, db.ForeignKey('usuario.id'), nullable=False)
-    fecha_emision = db.Column(db.String(20), default=datetime.now().strftime("%d/%m/%Y"))
-    diagnostico = db.Column(db.Text)
-    medicamentos = db.Column(db.Text)
-    indicaciones = db.Column(db.Text)
-    proxima_cita = db.Column(db.String(20))
-    estado = db.Column(db.String(20), default='Activa')
-    
-    paciente = db.relationship('Paciente', backref='recetas')
-    medico = db.relationship('Usuario', backref='recetas_emitidas')
+    historial = db.relationship('HistoriaClinica', backref='documentos')
+    usuario = db.relationship('Usuario', backref='documentos_clinicos')
 
     # ========== FUNCIONES AUXILIARES ==========
 
@@ -5610,7 +5596,7 @@ def enviar_receta_email_route(id):
     return base_html(content, f"Enviar Receta #{receta.id:06d}")
 
 
-with app.app_context():
+
     db.create_all()
     
     # Crear backup automático al iniciar (cada día)
@@ -5639,9 +5625,28 @@ with app.app_context():
         db.session.commit()
         print("✅ Admin creado: admin / admin123")
     
-    print("🏥 ¡Clínica Médica lista para usar!")
-    print(f"💾 {len(backups_hoy) if 'backups_hoy' in locals() else 0} backups hoy")
-
+     # ========== CREAR TIPOS DE HISTORIAL POR DEFECTO ==========
+    if TipoHistorial.query.count() == 0:
+        tipos_default = [
+            {'nombre': 'Consulta General', 'descripcion': 'Consulta médica general o primera visita', 'color': '#3498db'},
+            {'nombre': 'Revisión', 'descripcion': 'Revisión periódica o control rutinario', 'color': '#27ae60'},
+            {'nombre': 'Urgencia', 'descripcion': 'Atención de urgencias o emergencias', 'color': '#e74c3c'},
+            {'nombre': 'Especialista', 'descripcion': 'Derivación a médico especialista', 'color': '#9b59b6'},
+            {'nombre': 'Análisis Clínicos', 'descripcion': 'Resultados de análisis de laboratorio', 'color': '#f39c12'},
+            {'nombre': 'Radiología', 'descripcion': 'Radiografías, ecografías, TAC', 'color': '#1abc9c'},
+            {'nombre': 'Control Cardiológico', 'descripcion': 'Control del corazón y sistema circulatorio', 'color': '#e74c3c'},
+            {'nombre': 'Pediatría', 'descripcion': 'Consulta para niños y adolescentes', 'color': '#ff6b6b'},
+        ]
+        for t in tipos_default:
+            tipo = TipoHistoriaClinica(
+                nombre=t['nombre'],
+                descripcion=t['descripcion'],
+                color=t['color'],
+                admin_id=1
+            )
+            db.session.add(tipo)
+        db.session.commit()
+        print("✅ Tipos de historial clínico creados")
 
 # ========== GESTIÓN DE BACKUPS ==========
 
@@ -5874,7 +5879,7 @@ def eliminar_backup(filename):
 with app.app_context():
     db.create_all()
     
-    # Crear admin por defecto si no existe
+    # Crear admin
     if Usuario.query.count() == 0:
         admin = Usuario(
             username='admin',
@@ -5885,21 +5890,29 @@ with app.app_context():
             rol='admin'
         )
         db.session.add(admin)
-        
-        # Crear tipos de historia clínica por defecto
+        db.session.commit()
+        print("🔐 Admin creado: admin / admin123")
+    
+    # Crear tipos de historia clínica
+    if TipoHistoriaClinica.query.count() == 0:
         tipos_default = [
-            TipoHistoriaClinica(nombre='Historia Clínica General', descripcion='Historia clínica general del paciente', departamento='General', color='#3498db', admin_id=1),
-            TipoHistoriaClinica(nombre='Control Cardiológico', descripcion='Seguimiento cardiológico', departamento='Cardiología', color='#e74c3c', admin_id=1),
-            TipoHistoriaClinica(nombre='Control Pediátrico', descripcion='Seguimiento pediátrico', departamento='Pediatría', color='#27ae60', admin_id=1),
-            TipoHistoriaClinica(nombre='Informe Radiológico', descripcion='Estudios de imagen', departamento='General', color='#9b59b6', admin_id=1),
+            {'nombre': 'Historia Clínica General', 'descripcion': 'Historia clínica general del paciente', 'color': '#3498db'},
+            {'nombre': 'Control Cardiológico', 'descripcion': 'Seguimiento cardiológico', 'color': '#e74c3c'},
+            {'nombre': 'Control Pediátrico', 'descripcion': 'Seguimiento pediátrico', 'color': '#27ae60'},
+            {'nombre': 'Informe Radiológico', 'descripcion': 'Estudios de imagen', 'color': '#9b59b6'},
         ]
         for t in tipos_default:
-            db.session.add(t)
-        
+            tipo = TipoHistoriaClinica(
+                nombre=t['nombre'],
+                descripcion=t['descripcion'],
+                color=t['color'],
+                admin_id=1
+            )
+            db.session.add(tipo)
         db.session.commit()
-        print("✅ Base de datos inicializada")
-        print("🔐 Admin creado: admin / admin123")
-        print("🏥 ¡Clínica Médica lista para usar!")
+        print("✅ Tipos de historia clínica creados")
+    
+    print("🏥 ¡Clínica Médica lista para usar!")
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5001)
