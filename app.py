@@ -223,6 +223,21 @@ class DocumentoClinico(db.Model):
     
     historial = db.relationship('HistoriaClinica', backref='documentos')
     usuario = db.relationship('Usuario', backref='documentos_clinicos')
+    
+class Receta(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    nombre_medicamento = db.Column(db.String(200), nullable=False)
+    dosis = db.Column(db.Text)
+    instrucciones = db.Column(db.Text)
+    fecha = db.Column(db.String(20), default=datetime.now().strftime("%d/%m/%Y"))
+    historial_id = db.Column(db.Integer, db.ForeignKey('historia_clinica.id'), nullable=False)
+    paciente_id = db.Column(db.Integer, db.ForeignKey('paciente.id'), nullable=True)
+    medico_id = db.Column(db.Integer, db.ForeignKey('usuario.id'), nullable=False)
+    
+    historial = db.relationship('HistoriaClinica', backref='recetas')
+    paciente = db.relationship('Paciente', backref='recetas')
+    medico = db.relationship('Usuario', backref='recetas')
+
 
     # ========== FUNCIONES AUXILIARES ==========
 
