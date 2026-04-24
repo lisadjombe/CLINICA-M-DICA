@@ -134,6 +134,7 @@ class Usuario(db.Model):
     reset_token_expira = db.Column(db.String(20), nullable=True)
 
 class Paciente(db.Model):
+    dni = db.Column(db.String(20))
     id = db.Column(db.Integer, primary_key=True)
     nombre = db.Column(db.String(100), nullable=False)
     email = db.Column(db.String(100))
@@ -510,6 +511,12 @@ def base_html(content, titulo="Clínica Médica"):
     <html>
     <head>
         <title>{titulo}</title>
+        <meta name="apple-mobile-web-app-capable" content="yes">
+        <meta name="apple-mobile-web-app-status-bar-style" content="default">
+        <meta name="theme-color" content="#1a5276">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+        <meta name="apple-mobile-web-app-capable" content="yes">
+        <meta name="apple-mobile-web-app-status-bar-style" content="default">
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1536,6 +1543,10 @@ def registro():
                         <label>👨‍⚕️ Nombre Completo *</label>
                         <input type="text" name="nombre_completo" class="form-control" placeholder="Ej: Dr. Juan Pérez" required>
                     </div>
+                    <div class="form-group">
+                     <label>DNI / Documento</label>
+                            <input type="text" name="dni" class="form-control" placeholder="Ej: 12345678A">
+                    </div>
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
                         <div class="form-group">
                             <label>🏥 Especialidad / Departamento</label>
@@ -2282,14 +2293,14 @@ def pacientes():
         pacientes_list = Paciente.query.order_by(Paciente.nombre).all()
     else:
         pacientes_list = Paciente.query.filter_by(usuario_id=user.id).order_by(Paciente.nombre).all()
-    
     busqueda = request.args.get('busqueda', '')
     if busqueda:
         pacientes_list = [p for p in pacientes_list if 
-                        busqueda.lower() in p.nombre.lower() or 
-                        (p.obra_social and busqueda.lower() in p.obra_social.lower()) or
-                        (p.email and busqueda.lower() in p.email.lower())]
-    
+                    busqueda.lower() in p.nombre.lower() or 
+                    (p.dni and busqueda.lower() in p.dni.lower()) or
+                    (p.obra_social and busqueda.lower() in p.obra_social.lower()) or
+                    (p.email and busqueda.lower() in p.email.lower())]
+
     # Estadísticas rápidas
     total_pacientes = len(pacientes_list)
     pacientes_con_email = sum(1 for p in pacientes_list if p.email)
@@ -2318,8 +2329,7 @@ def pacientes():
             border_color = '#e74c3c'
         
         # Grupo sanguíneo badge
-        grupo_badge = f'<span style="background:#e74c3c; color:white; padding:2px 8px; border-radius:10px; font-size:11px; margin-left:5px;">{p.grupo_sanguineo}</span>' if p.grupo_sanguineo else ''
-        
+        grupo_badge = f'<span style="color:#e74c3c; font-weight:600; font-size:12px;">🩸 {p.grupo_sanguineo}</span>' if p.grupo_sanguineo else ''
         pacientes_html += f"""
         <div class="paciente-card" style="border-top: 4px solid {border_color};">
             <div class="paciente-header">
@@ -2383,8 +2393,7 @@ def pacientes():
         <!-- Buscador -->
         <div style="display: flex; gap: 10px; margin-bottom: 20px;">
             <form method="GET" style="flex: 1; display: flex; gap: 10px;">
-                <input type="text" name="busqueda" placeholder="🔍 Buscar por nombre, email u obra social..." value="{busqueda}" 
-                       style="flex:1; padding:12px; border:1px solid #ddd; border-radius:8px; font-size:14px;">
+                 <input type="text" name="busqueda" placeholder="🔍 Buscar por nombre, DNI, email u obra social..." value="{busqueda}" style="flex:1; padding:12px; border:1px solid #ddd; border-radius:8px; font-size:14px;">
                 <button type="submit" class="btn btn-primary">Buscar</button>
                 {f'<a href="/pacientes" class="btn" style="background:#95a5a6;color:white;">Limpiar</a>' if busqueda else ''}
             </form>
@@ -2408,6 +2417,7 @@ def nuevo_paciente():
         paciente = Paciente(
             nombre=request.form['nombre'],
             email=request.form.get('email', ''),
+            dni=request.form.get('dni', ''),
             telefono=request.form.get('telefono', ''),
             obra_social=request.form.get('obra_social', ''),
             direccion=request.form.get('direccion', ''),
@@ -2425,10 +2435,14 @@ def nuevo_paciente():
     content = """
         <h2>🏥 Nuevo Paciente</h2>
         <form method="POST" style="max-width: 700px;">
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px;">
                 <div class="form-group">
                     <label>Nombre completo *</label>
                     <input type="text" name="nombre" class="form-control" required>
+                </div>
+                <div class="form-group">
+                    <label>DNI / Documento</label>
+                    <input type="text" name="dni" class="form-control" placeholder="Ej: 12345678A">
                 </div>
                 <div class="form-group">
                     <label>Fecha de nacimiento</label>
@@ -2570,6 +2584,7 @@ def ver_paciente(id):
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
             <div class="card">
                 <h3>📋 Información del Paciente</h3>
+                <p><strong>DNI:</strong> {paciente.dni or 'No registrado'}</p>
                 <p><strong>Obra Social:</strong> {paciente.obra_social or 'Particular'}</p>
                 <p><strong>Email:</strong> {paciente.email or '-'}</p>
                 <p><strong>Teléfono:</strong> {paciente.telefono or '-'}</p>
@@ -2665,6 +2680,7 @@ def editar_paciente(id):
     if request.method == 'POST':
         paciente.nombre = request.form['nombre']
         paciente.email = request.form.get('email', '')
+        paciente.dni = request.form.get('dni', '')  # ← AÑADIDO
         paciente.telefono = request.form.get('telefono', '')
         paciente.obra_social = request.form.get('obra_social', '')
         paciente.direccion = request.form.get('direccion', '')
@@ -3994,6 +4010,7 @@ def nuevo_tipo_historia():
     if request.method == 'POST':
         tipo = TipoHistoriaClinica(
             nombre=request.form['nombre'],
+            dni=request.form.get('dni', ''), 
             descripcion=request.form.get('descripcion', ''),
             departamento=request.form.get('departamento', 'General'),
             color=request.form.get('color', '#3498db'),
@@ -5344,10 +5361,13 @@ def ver_receta(id):
         content = f"""
         <div style="max-width: 800px; margin: 40px auto; background: white; padding: 40px; border-radius: 20px; box-shadow: 0 10px 40px rgba(0,0,0,0.1);">
             <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #1a5276; padding-bottom: 20px; margin-bottom: 30px;">
-                <div>
+                <div style="display: flex; align-items: center; gap: 15px;">
+            <img src="/static/logo.png" style="height: 60px;" onerror="this.style.display='none'" alt="Logo">
+            <div>
                     <h1 style="color: #1a5276; margin: 0; font-size: 32px;">🏥 CLÍNICA MÉDICA</h1>
                     <p style="color: #666; margin: 5px 0 0;">Receta Médica Oficial</p>
-                </div>
+                    </div>
+            </div>
                 <div style="text-align: right;">
                     <p style="margin: 0; font-weight: bold;">Nº {receta.id:06d}</p>
                     <p style="margin: 5px 0 0;">{receta.fecha}</p>
